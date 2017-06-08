@@ -9,7 +9,7 @@ import           PostgREST.Config                     (AppConfig (..),
                                                        minimumPgVersion,
                                                        prettyVersion,
                                                        readOptions)
-import           PostgREST.Error                      (encodeError)
+import           PostgREST.Error                      (encodeError, simpleError)
 import           PostgREST.OpenAPI                    (isMalformedProxyUri)
 import           PostgREST.DbStructure
 import           PostgREST.Types                      (DbStructure, Schema)
@@ -27,6 +27,7 @@ import qualified Hasql.Session                        as H
 import qualified Hasql.Decoders                       as HD
 import qualified Hasql.Encoders                       as HE
 import qualified Hasql.Pool                           as P
+import qualified Network.HTTP.Types.Status            as HT
 import           Network.Wai.Handler.Warp
 import           System.IO                            (BufferMode (..),
                                                        hSetBuffering)
@@ -118,6 +119,7 @@ main = do
                   . setPort port
                   . setServerName (toS $ "postgrest/" <> prettyVersion)
                   . setTimeout 3600
+                  . setOnExceptionResponse (simpleError HT.status500 . show)
                   $ defaultSettings
 
   when (isMalformedProxyUri $ toS <$> proxy) $ panic

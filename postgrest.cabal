@@ -33,6 +33,7 @@ executable postgrest
                      , base
                      , hasql
                      , hasql-pool
+                     , http-types
                      , postgrest
                      , protolude
                      , text
