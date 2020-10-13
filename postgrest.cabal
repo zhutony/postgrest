@@ -1,5 +1,5 @@
 name:               postgrest
-version:            7.0.0
+version:            7.0.1
 synopsis:           REST API for any Postgres database
 description:        Reads the schema of a PostgreSQL database and creates RESTful routes
                     for the tables and views, supporting all HTTP verbs that security
@@ -19,10 +19,10 @@ source-repository head
   type:     git
   location: git://github.com/PostgREST/postgrest.git
 
-flag ci
+flag FailOnWarn
   default:     False
   manual:      True
-  description: No warnings allowed in continuous integration
+  description: No warnings allowed
 
 library
   exposed-modules:    PostgREST.ApiRequest
@@ -41,14 +41,15 @@ library
                       PostgREST.Types
   other-modules:      Paths_postgrest
                       PostgREST.Private.Common
+                      PostgREST.Private.ProxyUri
                       PostgREST.Private.QueryFragment
   hs-source-dirs:     src
-  build-depends:      base                      >= 4.9 && < 4.14
+  build-depends:      base                      >= 4.9 && < 4.15
                     , HTTP                      >= 4000.3.7 && < 4000.4
                     , Ranged-sets               >= 0.3 && < 0.5
-                    , aeson                     >= 1.4.7 && < 1.5
+                    , aeson                     >= 1.4.7 && < 1.6
                     , ansi-wl-pprint            >= 0.6.7 && < 0.7
-                    , base64-bytestring         >= 1 && < 1.1
+                    , base64-bytestring         >= 1 && < 1.3
                     , bytestring                >= 0.10.8 && < 0.11
                     , case-insensitive          >= 1.2 && < 1.3
                     , cassava                   >= 0.4.5 && < 0.6
@@ -58,6 +59,7 @@ library
                     , contravariant-extras      >= 0.3.3 && < 0.4
                     , cookie                    >= 0.4.2 && < 0.5
                     , either                    >= 4.4.1 && < 5.1
+                    , fast-logger               >= 2.4.5
                     , gitrev                    >= 1.2 && < 1.4
                     , hasql                     >= 1.4 && < 1.5
                     , hasql-pool                >= 0.5 && < 0.6
@@ -70,26 +72,31 @@ library
                     , lens                      >= 4.14 && < 4.20
                     , lens-aeson                >= 1.0.1 && < 1.2
                     , network-uri               >= 2.6.1 && < 2.8
-                    , optparse-applicative      >= 0.13 && < 0.16
+                    , optparse-applicative      >= 0.13 && < 0.17
                     , parsec                    >= 3.1.11 && < 3.2
-                    , protolude                 >= 0.2.4 && < 0.3
+                    , protolude                 >= 0.3 && < 0.4
                     , regex-tdfa                >= 1.2.2 && < 1.4
                     , scientific                >= 0.3.4 && < 0.4
-                    , swagger2                  >= 2.4 && < 2.6
+                    , swagger2                  >= 2.4 && < 2.7
                     , text                      >= 1.2.2 && < 1.3
                     , time                      >= 1.6 && < 1.11
                     , unordered-containers      >= 0.2.8 && < 0.3
                     , vector                    >= 0.11 && < 0.13
                     , wai                       >= 3.2.1 && < 3.3
                     , wai-cors                  >= 0.2.5 && < 0.3
-                    , wai-extra                 >= 3.0.19 && < 3.1
-                    , wai-middleware-static     >= 0.8.1 && < 0.9
+                    , wai-extra                 >= 3.0.19 && < 3.2
+                    , wai-logger                >= 2.3.2
+                    , wai-middleware-static     >= 0.8.1 && < 0.10
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
                       QuasiQuotes
                       NoImplicitPrelude
-  ghc-options:        -O2 -Werror -Wall -fwarn-identities
-                      -fno-spec-constr -optP-Wno-nonportable-include-path
+  if flag(FailOnWarn)
+    ghc-options: -O2 -Werror -Wall -fwarn-identities
+                 -fno-spec-constr -optP-Wno-nonportable-include-path
+  else
+    ghc-options: -O2 -Wall -fwarn-identities
+                 -fno-spec-constr -optP-Wno-nonportable-include-path
           -- -fno-spec-constr may help keep compile time memory use in check,
           --   see https://gitlab.haskell.org/ghc/ghc/issues/16017#note_219304
           -- -optP-Wno-nonportable-include-path
@@ -99,29 +106,35 @@ library
 executable postgrest
   main-is:            Main.hs
   hs-source-dirs:     main
-  build-depends:      base              >= 4.9 && < 4.14
-                    , auto-update       >= 0.1.4 && < 0.2
-                    , base64-bytestring >= 1 && < 1.1
-                    , bytestring        >= 0.10.8 && < 0.11
-                    , directory         >= 1.2.6 && < 1.4
-                    , either            >= 4.4.1 && < 5.1
-                    , hasql             >= 1.4 && < 1.5
-                    , hasql-pool        >= 0.5 && < 0.6
-                    , hasql-transaction >= 0.7.2 && < 1.1
-                    , network           < 3.2
+  build-depends:      base                >= 4.9 && < 4.15
+                    , auto-update         >= 0.1.4 && < 0.2
+                    , base64-bytestring   >= 1 && < 1.3
+                    , bytestring          >= 0.10.8 && < 0.11
+                    , directory           >= 1.2.6 && < 1.4
+                    , either              >= 4.4.1 && < 5.1
+                    , hasql               >= 1.4 && < 1.5
+                    , hasql-pool          >= 0.5 && < 0.6
+                    , hasql-transaction   >= 0.7.2 && < 1.1
+                    , hasql-notifications >= 0.1 && < 0.2
+                    , network             >= 2.6 && < 3.2
                     , postgrest
-                    , protolude         >= 0.2.4 && < 0.3
-                    , retry             >= 0.7.4 && < 0.9
-                    , text              >= 1.2.2 && < 1.3
-                    , time              >= 1.6 && < 1.11
-                    , wai               >= 3.2.1 && < 3.3
-                    , warp              >= 3.2.12 && < 3.4
+                    , protolude           >= 0.3 && < 0.4
+                    , retry               >= 0.7.4 && < 0.9
+                    , text                >= 1.2.2 && < 1.3
+                    , time                >= 1.6 && < 1.11
+                    , wai                 >= 3.2.1 && < 3.3
+                    , warp                >= 3.2.12 && < 3.4
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
                       QuasiQuotes
                       NoImplicitPrelude
-  ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -I2"
+  if flag(FailOnWarn)
+    ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -I2"
                       -O2 -Werror -Wall -fwarn-identities
+                      -fno-spec-constr -optP-Wno-nonportable-include-path
+  else
+    ghc-options:      -threaded -rtsopts "-with-rtsopts=-N -I2"
+                      -O2 -Wall -fwarn-identities
                       -fno-spec-constr -optP-Wno-nonportable-include-path
 
   if !os(windows)
@@ -163,12 +176,12 @@ test-suite spec
                       SpecHelper
                       TestTypes
   hs-source-dirs:     test
-  build-depends:      base              >= 4.9 && < 4.14
-                    , aeson             >= 1.4.7 && < 1.5
+  build-depends:      base              >= 4.9 && < 4.15
+                    , aeson             >= 1.4.7 && < 1.6
                     , aeson-qq          >= 0.8.1 && < 0.9
                     , async             >= 2.1.1 && < 2.3
                     , auto-update       >= 0.1.4 && < 0.2
-                    , base64-bytestring >= 1 && < 1.1
+                    , base64-bytestring >= 1 && < 1.3
                     , bytestring        >= 0.10.8 && < 0.11
                     , case-insensitive  >= 1.2 && < 1.3
                     , cassava           >= 0.4.5 && < 0.6
@@ -179,21 +192,21 @@ test-suite spec
                     , hasql-transaction >= 0.7.2 && < 1.1
                     , heredoc           >= 0.2 && < 0.3
                     , hspec             >= 2.3 && < 2.8
-                    , hspec-wai         >= 0.10 && < 0.11
-                    , hspec-wai-json    >= 0.10 && < 0.11
+                    , hspec-wai         >= 0.10 && < 0.12
+                    , hspec-wai-json    >= 0.10 && < 0.12
                     , http-types        >= 0.12.3 && < 0.13
                     , lens              >= 4.14 && < 4.20
                     , lens-aeson        >= 1.0.1 && < 1.2
                     , monad-control     >= 1.0.1 && < 1.1
                     , postgrest
                     , process           >= 1.4.2 && < 1.7
-                    , protolude         >= 0.2.4 && < 0.3
+                    , protolude         >= 0.3 && < 0.4
                     , regex-tdfa        >= 1.2.2 && < 1.4
                     , text              >= 1.2.2 && < 1.3
                     , time              >= 1.6 && < 1.11
                     , transformers-base >= 0.4.4 && < 0.5
                     , wai               >= 3.2.1 && < 3.3
-                    , wai-extra         >= 3.0.19 && < 3.1
+                    , wai-extra         >= 3.0.19 && < 3.2
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
                       QuasiQuotes
@@ -207,12 +220,12 @@ Test-Suite spec-querycost
   Hs-Source-Dirs:      test
   Main-Is:             QueryCost.hs
   Other-Modules:       SpecHelper
-  Build-Depends:       base              >= 4.9 && < 4.14
-                     , aeson             >= 1.4.7 && < 1.5
+  Build-Depends:       base              >= 4.9 && < 4.15
+                     , aeson             >= 1.4.7 && < 1.6
                      , aeson-qq          >= 0.8.1 && < 0.9
                      , async             >= 2.1.1 && < 2.3
                      , auto-update       >= 0.1.4 && < 0.2
-                     , base64-bytestring >= 1 && < 1.1
+                     , base64-bytestring >= 1 && < 1.3
                      , bytestring        >= 0.10.8 && < 0.11
                      , case-insensitive  >= 1.2 && < 1.3
                      , cassava           >= 0.4.5 && < 0.6
@@ -223,18 +236,18 @@ Test-Suite spec-querycost
                      , hasql-transaction >= 0.7.2 && < 1.1
                      , heredoc           >= 0.2 && < 0.3
                      , hspec             >= 2.3 && < 2.8
-                     , hspec-wai         >= 0.10 && < 0.11
-                     , hspec-wai-json    >= 0.10 && < 0.11
+                     , hspec-wai         >= 0.10 && < 0.12
+                     , hspec-wai-json    >= 0.10 && < 0.12
                      , http-types        >= 0.12.3 && < 0.13
                      , lens              >= 4.14 && < 4.20
                      , lens-aeson        >= 1.0.1 && < 1.2
                      , monad-control     >= 1.0.1 && < 1.1
                      , postgrest
                      , process           >= 1.4.2 && < 1.7
-                     , protolude         >= 0.2.4 && < 0.3
+                     , protolude         >= 0.3 && < 0.4
                      , regex-tdfa        >= 1.2.2 && < 1.4
                      , text              >= 1.2.2 && < 1.3
                      , time              >= 1.6 && < 1.11
                      , transformers-base >= 0.4.4 && < 0.5
                      , wai               >= 3.2.1 && < 3.3
-                     , wai-extra         >= 3.0.19 && < 3.1
+                     , wai-extra         >= 3.0.19 && < 3.2

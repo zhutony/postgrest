@@ -1,6 +1,6 @@
 # Pinned version of Nixpkgs, generated with nixpkgs-upgrade.
 {
-  date = "2020-04-19";
-  rev = "10100a97c8964e82b30f180fda41ade8e6f69e41";
-  tarballHash = "011f36kr3c1ria7rag7px26bh73d1b0xpqadd149bysf4hg17rln";
+  date = "2020-10-04";
+  rev = "d191ee22f0b0c91070f9f4c79210d4e398df0b93";
+  tarballHash = "13fb4cgxxc47shmzbm0rawfxjnilf7r4zq1vwc0z6s3lxijl9wl9";
 }

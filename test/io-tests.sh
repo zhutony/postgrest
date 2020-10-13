@@ -1,6 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Run unit tests for Input/Ouput of PostgREST seen as a black box
 # with test output in Test Anything Protocol format.
+#
+# These tests expect that `postgrest` is on the PATH, as well as `curl` and
+# `ncat` (from the nmap package in some distribution).
 #
 # References:
 #   [1] Test Anything Protocol
@@ -12,8 +15,14 @@
 #   [3] List of TCP and UDP port numbers
 #   https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers
 #
+set -eu
+
+export POSTGREST_TEST_CONNECTION=${POSTGREST_TEST_CONNECTION:-"postgres:///postgrest_test"}
+
 cd "$(dirname "$0")"
 cd io-tests
+
+trap "kill 0" int term exit
 
 # Port for Test PostgREST Server (must match config)
 pgrPort=49421 # in range 49152–65535: for private or temporary use
@@ -30,11 +39,11 @@ ko(){ result 'not ok' "- $1"; failedTests=$(( $failedTests + 1 )); }
 comment(){ echo "# $1"; }
 
 # Utilities to start/stop test PostgREST server running in the background
-pgrStart(){ stack exec -- postgrest "$1" >/dev/null & pgrPID="$!"; }
-pgrStartRead(){ stack exec -- postgrest "$1" >/dev/null < "$2" & pgrPID="$!"; }
+pgrStart(){ postgrest $1 >/dev/null 2>/dev/null & pgrPID="$!"; }
+pgrStartRead(){ postgrest $1 <$2 >/dev/null & pgrPID="$!"; }
+pgrStartStdin(){ postgrest $1 >/dev/null <<< "$2" & pgrPID="$!"; }
 pgrStarted(){ kill -0 "$pgrPID" 2>/dev/null; }
-pgrStop(){ kill "$pgrPID" 2>/dev/null; }
-pgrStopAll(){ pkill -f "$(stack path --local-install-root)/bin/postgrest"; }
+pgrStop(){ kill "$pgrPID" 2>/dev/null; pgrPID=""; }
 
 # Utilities to send HTTP requests to the PostgREST server
 rootStatus(){
@@ -47,9 +56,11 @@ authorsStatus(){
     "http://localhost:$pgrPort/authors_only"
 }
 
-# Start and End of Unit Tests
-setUp(){ pgrStopAll; }
-cleanUp(){ pgrStopAll; }
+v1SchemaParentsStatus(){
+  curl -s -o /dev/null -w '%{http_code}' \
+    -H "Accept-Profile: v1" \
+    "http://localhost:$pgrPort/parents"
+}
 
 # Unit Test Templates
 readSecretFromFile(){
@@ -82,9 +93,9 @@ readSecretFromFile(){
   pgrStop
 }
 
-readDbUriFromFile(){
+readDbUriFromStdin(){
   pgrConfig="dburi-from-file.config"
-  pgrStartRead "./configs/$pgrConfig" "./dburis/$1"
+  pgrStartStdin "./configs/$pgrConfig" "$1"
   while pgrStarted && test "$( rootStatus )" -ne 200
   do
     # wait for the server to start
@@ -93,9 +104,9 @@ readDbUriFromFile(){
   done
   if pgrStarted
   then
-    ok "connection with $2 dburi read from a file"
+    ok "connection with $2 dburi read from stdin / a file"
   else
-    ko "connection with $2 dburi read from a file"
+    ko "connection with $2 dburi read from stdin / a file"
   fi
   pgrStop
 }
@@ -109,7 +120,7 @@ reqWithRoleClaimKey(){
     sleep 0.1 \
     || sleep 1 # fallback: subsecond sleep is not standard and may fail
   done
-  authorsJwt=$(psql -qtAX postgrest_test -c "select jwt.sign('$2', 'reallyreallyreallyreallyverysafe');")
+  authorsJwt=$(psql -qtAX "$POSTGREST_TEST_CONNECTION" -c "select jwt.sign('$2', 'reallyreallyreallyreallyverysafe');")
   httpStatus="$( authorsStatus "$authorsJwt" )"
   if test "$httpStatus" -eq $3
   then
@@ -132,10 +143,10 @@ invalidRoleClaimKey(){
   if pgrStarted
   then
     ko "invalid jspath \"$1\": accepted"
+    pgrStop
   else
     ok "invalid jspath \"$1\": rejected"
   fi
-  pgrStop
 }
 
 # ensure iat claim is successful in the presence of pgrst time cache, see https://github.com/PostgREST/postgrest/issues/1139
@@ -148,7 +159,7 @@ ensureIatClaimWorks(){
     || sleep 1 # fallback: subsecond sleep is not standard and may fail
   done
   for i in {1..10}; do \
-    iatJwt=$(psql -qtAX postgrest_test -c "select jwt.sign(row_to_json(r), 'reallyreallyreallyreallyverysafe') from ( select 'postgrest_test_author' as role, extract(epoch from now()) as iat) r")
+    iatJwt=$(psql -qtAX "$POSTGREST_TEST_CONNECTION" -c "select jwt.sign(row_to_json(r), 'reallyreallyreallyreallyverysafe') from ( select 'postgrest_test_author' as role, extract(epoch from now()) as iat) r")
     httpStatus="$( authorsStatus $iatJwt )"
     if test "$httpStatus" -ne 200
     then
@@ -181,6 +192,86 @@ ensureAppSettings(){
   pgrStop
 }
 
+checkAppSettingsReload(){
+  pgrStart "./configs/sigusr2-settings.config"
+  while pgrStarted && test "$( rootStatus )" -ne 200
+  do
+    # wait for the server to start
+    sleep 0.1 \
+    || sleep 1 # fallback: subsecond sleep is not standard and may fail
+  done
+  # change setting
+  replaceConfigValue "app.settings.name_var" "Jane" ./configs/sigusr2-settings.config
+  # reload
+  kill -s SIGUSR2 $pgrPID
+  response=$(curl -s "http://localhost:$pgrPort/rpc/get_guc_value?name=app.settings.name_var")
+  if test "$response" = "\"Jane\""
+  then
+    ok "app.settings.name_var config reloaded with SIGUSR2"
+  else
+    ko "app.settings.name_var config not reloaded with SIGUSR2. Got: $response"
+  fi
+  pgrStop
+  # go back to original setting
+  replaceConfigValue "app.settings.name_var" "John" ./configs/sigusr2-settings.config
+}
+
+checkJwtSecretReload(){
+  pgrStart "./configs/sigusr2-settings.config"
+  while pgrStarted && test "$( rootStatus )" -ne 200
+  do
+    # wait for the server to start
+    sleep 0.1 \
+    || sleep 1 # fallback: subsecond sleep is not standard and may fail
+  done
+  secret="reallyreallyreallyreallyverysafe"
+  # change setting
+  replaceConfigValue "jwt-secret" "$secret" ./configs/sigusr2-settings.config
+  # reload
+  kill -s SIGUSR2 $pgrPID
+  payload='{"role":"postgrest_test_author"}'
+  authorsJwt=$(psql -qtAX "$POSTGREST_TEST_CONNECTION" -c "select jwt.sign('$payload', '$secret');")
+  httpStatus="$( authorsStatus "$authorsJwt" )"
+  if test "$httpStatus" -eq 200
+  then
+    ok "jwt-secret config reloaded with SIGUSR2"
+  else
+    ko "jwt-secret config not reloaded with SIGUSR2. Got: $httpStatus"
+  fi
+  pgrStop
+  # go back to original setting
+  replaceConfigValue "jwt-secret" "invalidinvalidinvalidinvalidinvalid" ./configs/sigusr2-settings.config
+}
+
+checkDbSchemaReload(){
+  pgrStart "./configs/sigusr2-settings.config"
+  while pgrStarted && test "$( rootStatus )" -ne 200
+  do
+    # wait for the server to start
+    sleep 0.1 \
+    || sleep 1 # fallback: subsecond sleep is not standard and may fail
+  done
+  # add v1 schema to db-schema
+  replaceConfigValue "db-schema" "test, v1" ./configs/sigusr2-settings.config
+  # reload
+  kill -s SIGUSR2 $pgrPID
+  kill -s SIGUSR1 $pgrPID
+  httpStatus="$(v1SchemaParentsStatus)"
+  if test "$httpStatus" -eq 200
+  then
+    ok "db-schema config reloaded with SIGUSR2"
+  else
+    ko "db-schema config not reloaded with SIGUSR2. Got: $httpStatus"
+  fi
+  pgrStop
+  # go back to original setting
+  replaceConfigValue "db-schema" "test" ./configs/sigusr2-settings.config
+}
+
+replaceConfigValue(){
+  sed -i "s/.*$1.*/$1 = \"$2\"/g" $3
+}
+
 getSocketStatus() {
   curl -sL -w "%{http_code}\\n" -o /dev/null localhost:54321
 }
@@ -209,9 +300,7 @@ socketConnection(){
 test -n "$(command -v curl)" || bailOut 'curl is not available'
 
 # PRE: postgres must be running
-psql -l 1>/dev/null 2>/dev/null || bailOut 'postgres is not running'
-
-setUp
+psql -l "$POSTGREST_TEST_CONNECTION" 1>/dev/null 2>/dev/null || bailOut 'postgres is not running'
 
 echo "Running IO tests.."
 
@@ -231,8 +320,10 @@ readSecretFromFile ascii.b64 'Base64 (ASCII)'
 readSecretFromFile utf8.b64 'Base64 (UTF-8)'
 readSecretFromFile binary.b64 'Base64 (binary)'
 
-readDbUriFromFile uri.noeol "(no EOL)"
-readDbUriFromFile uri.txt "(EOL)"
+eol=$'\x0a'
+
+readDbUriFromStdin "$POSTGREST_TEST_CONNECTION" "(no EOL)"
+readDbUriFromStdin "$POSTGREST_TEST_CONNECTION$eol" "(EOL)"
 
 reqWithRoleClaimKey '.postgrest.a_role' '{"postgrest":{"a_role":"postgrest_test_author"}}' 200
 reqWithRoleClaimKey '.customObject.manyRoles[1]' '{"customObject":{"manyRoles": ["other", "postgrest_test_author"]}}' 200
@@ -250,7 +341,11 @@ invalidRoleClaimKey 1234
 ensureIatClaimWorks
 ensureAppSettings
 
+checkAppSettingsReload
+checkJwtSecretReload
+checkDbSchemaReload
+# TODO: SIGUSR2 tests for other config options
 
-cleanUp
+trap - int term exit
 
 exit $failedTests

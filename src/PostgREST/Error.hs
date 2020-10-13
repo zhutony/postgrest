@@ -27,7 +27,8 @@ import Network.Wai (Response, responseLBS)
 import Network.HTTP.Types.Header
 
 import PostgREST.Types
-import Protolude
+import Protolude       hiding (toS)
+import Protolude.Conv  (toS, toSL)
 
 
 class (JSON.ToJSON a) => PgrstError a where
@@ -131,8 +132,8 @@ instance JSON.ToJSON PgError where
 instance JSON.ToJSON P.UsageError where
   toJSON (P.ConnectionError e) = JSON.object [
     "code"    .= ("" :: Text),
-    "message" .= ("Database connection error" :: Text),
-    "details" .= (toS $ fromMaybe "" e :: Text)]
+    "message" .= ("Database connection error. Retrying the connection." :: Text),
+    "details" .= (toSL $ fromMaybe "" e :: Text)]
   toJSON (P.SessionError e) = JSON.toJSON e -- H.Error
 
 instance JSON.ToJSON H.QueryError where
@@ -168,7 +169,7 @@ instance JSON.ToJSON H.CommandError where
     "message" .= ("Unexpected amount of rows" :: Text),
     "details" .= i]
   toJSON (H.ClientError d) = JSON.object [
-    "message" .= ("Database client error" :: Text),
+    "message" .= ("Database client error. Retrying the connection." :: Text),
     "details" .= (fmap toS d :: Maybe Text)]
 
 pgErrorStatus :: Bool -> P.UsageError -> HT.Status
@@ -184,6 +185,7 @@ pgErrorStatus authed (P.SessionError (H.QueryError _ _ (H.ResultError rError))) 
         '0':'P':_ -> HT.status403 -- invalid role specification
         "23503"   -> HT.status409 -- foreign_key_violation
         "23505"   -> HT.status409 -- unique_violation
+        "25006"   -> HT.status405 -- read_only_sql_transaction
         '2':'5':_ -> HT.status500 -- invalid tx state
         '2':'8':_ -> HT.status403 -- invalid auth specification
         '2':'D':_ -> HT.status500 -- invalid tx termination
@@ -220,12 +222,11 @@ checkIsFatal _ = Nothing
 
 data SimpleError
   = GucHeadersError
+  | GucStatusError
   | BinaryFieldError ContentType
   | ConnectionLostError
-  | PutSingletonError
   | PutMatchingPkError
   | PutRangeNotAllowedError
-  | PutPayloadIncompleteError
   | JwtTokenMissing
   | JwtTokenInvalid Text
   | SingularityError Integer
@@ -233,17 +234,16 @@ data SimpleError
   deriving (Show, Eq)
 
 instance PgrstError SimpleError where
-  status GucHeadersError           = HT.status500
-  status (BinaryFieldError _)      = HT.status406
-  status ConnectionLostError       = HT.status503
-  status PutSingletonError         = HT.status400
-  status PutMatchingPkError        = HT.status400
-  status PutRangeNotAllowedError   = HT.status400
-  status PutPayloadIncompleteError = HT.status400
-  status JwtTokenMissing           = HT.status500
-  status (JwtTokenInvalid _)       = HT.unauthorized401
-  status (SingularityError _)      = HT.status406
-  status (ContentTypeError _)      = HT.status415
+  status GucHeadersError         = HT.status500
+  status GucStatusError          = HT.status500
+  status (BinaryFieldError _)    = HT.status406
+  status ConnectionLostError     = HT.status503
+  status PutMatchingPkError      = HT.status400
+  status PutRangeNotAllowedError = HT.status400
+  status JwtTokenMissing         = HT.status500
+  status (JwtTokenInvalid _)     = HT.unauthorized401
+  status (SingularityError _)    = HT.status406
+  status (ContentTypeError _)    = HT.status415
 
   headers (SingularityError _)     = [toHeader CTSingularJSON]
   headers (JwtTokenInvalid m)      = [toHeader CTApplicationJSON, invalidTokenHeader m]
@@ -252,17 +252,15 @@ instance PgrstError SimpleError where
 instance JSON.ToJSON SimpleError where
   toJSON GucHeadersError           = JSON.object [
     "message" .= ("response.headers guc must be a JSON array composed of objects with a single key and a string value" :: Text)]
+  toJSON GucStatusError           = JSON.object [
+    "message" .= ("response.status guc must be a valid status code" :: Text)]
   toJSON (BinaryFieldError ct)          = JSON.object [
     "message" .= ((toS (toMime ct) <> " requested but more than one column was selected") :: Text)]
   toJSON ConnectionLostError       = JSON.object [
-    "message" .= ("Database connection lost, retrying the connection." :: Text)]
+    "message" .= ("Database connection lost. Retrying the connection." :: Text)]
 
-  toJSON PutSingletonError         = JSON.object [
-    "message" .= ("PUT payload must contain a single row" :: Text)]
   toJSON PutRangeNotAllowedError   = JSON.object [
     "message" .= ("Range header and limit/offset querystring parameters are not allowed for PUT" :: Text)]
-  toJSON PutPayloadIncompleteError = JSON.object [
-    "message" .= ("You must specify all columns in the payload when using PUT" :: Text)]
   toJSON PutMatchingPkError        = JSON.object [
     "message" .= ("Payload values do not match URL in primary key column(s)" :: Text)]
 
@@ -279,7 +277,7 @@ instance JSON.ToJSON SimpleError where
 
 invalidTokenHeader :: Text -> Header
 invalidTokenHeader m =
-  ("WWW-Authenticate", "Bearer error=\"invalid_token\", " <> "error_description=" <> show m)
+  ("WWW-Authenticate", "Bearer error=\"invalid_token\", " <> "error_description=" <> encodeUtf8 (show m))
 
 singularityError :: (Integral a) => a -> SimpleError
 singularityError = SingularityError . toInteger

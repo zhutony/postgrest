@@ -15,8 +15,9 @@ import Test.Hspec
 import PostgREST.App         (postgrest)
 import PostgREST.Config      (AppConfig (..))
 import PostgREST.DbStructure (getDbStructure, getPgVersion)
-import PostgREST.Types       (pgVersion95, pgVersion96)
-import Protolude             hiding (toList)
+import PostgREST.Types       (LogLevel (..), pgVersion95, pgVersion96)
+import Protolude             hiding (toList, toS)
+import Protolude.Conv        (toS)
 import SpecHelper
 
 import qualified Feature.AndOrParamsSpec
@@ -55,7 +56,6 @@ main = do
   getTime <- mkAutoUpdate defaultUpdateSettings { updateAction = getCurrentTime }
 
   testDbConn <- getEnvVarWithDefault "POSTGREST_TEST_CONNECTION" "postgres://postgrest_test@localhost/postgrest_test"
-  setupDb testDbConn
 
   pool <- P.acquire (3, 10, toS testDbConn)
 
@@ -65,12 +65,15 @@ main = do
 
   let
     -- For tests that run with the same refDbStructure
-    app cfg = return ((), postgrest (cfg testDbConn) refDbStructure pool getTime $ pure ())
+    app cfg = do
+      refConf <- newIORef $ cfg testDbConn
+      return ((), postgrest LogCrit refConf refDbStructure pool getTime $ pure ())
 
     -- For tests that run with a different DbStructure(depends on configSchemas)
     appDbs cfg = do
       dbs <- (newIORef . Just) =<< setupDbStructure pool (configSchemas $ cfg testDbConn) actualPgVersion
-      return ((), postgrest (cfg testDbConn) dbs pool getTime $ pure ())
+      refConf <- newIORef $ cfg testDbConn
+      return ((), postgrest LogCrit refConf dbs pool getTime $ pure ())
 
   let withApp              = app testCfg
       maxRowsApp           = app testMaxRowsCfg

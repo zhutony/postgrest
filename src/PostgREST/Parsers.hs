@@ -22,7 +22,9 @@ import Text.ParserCombinators.Parsec hiding (many, (<|>))
 import PostgREST.Error      (ApiRequestError (ParseRequestError))
 import PostgREST.RangeQuery (NonnegRange)
 import PostgREST.Types
-import Protolude            hiding (intercalate, option, replace, try)
+import Protolude            hiding (intercalate, option, replace, toS,
+                             try)
+import Protolude.Conv       (toS)
 
 pRequestSelect :: Text -> Either ApiRequestError [Tree SelectItem]
 pRequestSelect selStr =
@@ -227,7 +229,7 @@ pLogicSingleVal = try (pQuotedValue <* notFollowedBy (noneOf ",)")) <|> try pPgA
       a <- string "{"
       b <- many (noneOf "{}")
       c <- string "}"
-      toS <$> pure (a ++ b ++ c)
+      pure (toS $ a ++ b ++ c)
 
 pLogicPath :: Parser (EmbedPath, Text)
 pLogicPath = do
@@ -250,9 +252,9 @@ mapError = mapLeft translateError
            $ showErrorMessages "or" "unknown parse error" "expecting" "unexpected" "end of input" (errorMessages e)
 
 -- Used for the config value "role-claim-key"
-pRoleClaimKey :: Text -> Either ApiRequestError JSPath
+pRoleClaimKey :: Text -> Either Text JSPath
 pRoleClaimKey selStr =
-  mapError $ parse pJSPath ("failed to parse role-claim-key value (" <> toS selStr <> ")") (toS selStr)
+  mapLeft show $ parse pJSPath ("failed to parse role-claim-key value (" <> toS selStr <> ")") (toS selStr)
 
 pJSPath :: Parser JSPath
 pJSPath = toJSPath <$> (period *> pPath `sepBy` period <* eof)

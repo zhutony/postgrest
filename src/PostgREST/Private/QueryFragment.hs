@@ -16,7 +16,8 @@ import qualified Data.Text                     as T (map, null,
                                                      takeWhile)
 import           PostgREST.Types
 import           Protolude                     hiding (cast,
-                                                intercalate, replace)
+                                                intercalate, replace,
+                                                toLower)
 import           Text.InterpolatedString.Perl6 (qc)
 
 noLocationF :: SqlFragment
@@ -86,10 +87,12 @@ asBinaryF fieldName = "coalesce(string_agg(_postgrest_t." <> pgFmtIdent fieldNam
 locationF :: [Text] -> SqlFragment
 locationF pKeys = [qc|(
   WITH data AS (SELECT row_to_json(_) AS row FROM {sourceCTEName} AS _ LIMIT 1)
-  SELECT array_agg(json_data.key || '=' || coalesce('eq.' || json_data.value, 'is.null'))
+  SELECT array_agg(json_data.key || '=eq.' || json_data.value)
   FROM data CROSS JOIN json_each_text(data.row) AS json_data
-  {("WHERE json_data.key IN ('" <> intercalate "','" pKeys <> "')") `emptyOnFalse` null pKeys}
+  WHERE json_data.key IN ('{fmtPKeys}')
 )|]
+  where
+    fmtPKeys = intercalate "','" pKeys
 
 fromQi :: QualifiedIdentifier -> SqlFragment
 fromQi t = (if s == "" then "" else pgFmtIdent s <> ".") <> pgFmtIdent n
@@ -201,5 +204,16 @@ returningF qi returnings =
 responseHeadersF :: PgVersion -> SqlFragment
 responseHeadersF pgVer =
   if pgVer >= pgVersion96
-    then "coalesce(nullif(current_setting('response.headers', true), ''), '[]')" :: Text -- nullif is used because of https://gist.github.com/steve-chavez/8d7033ea5655096903f3b52f8ed09a15
-    else "'[]'" :: Text
+    then currentSettingF "response.headers"
+    else "null" :: Text
+
+responseStatusF :: PgVersion -> SqlFragment
+responseStatusF pgVer =
+  if pgVer >= pgVersion96
+    then currentSettingF "response.status"
+    else "null" :: Text
+
+currentSettingF :: SqlFragment -> SqlFragment
+currentSettingF setting =
+  -- nullif is used because of https://gist.github.com/steve-chavez/8d7033ea5655096903f3b52f8ed09a15
+  "nullif(current_setting(" <> pgFmtLit setting <> ", true), '')"

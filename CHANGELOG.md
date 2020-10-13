@@ -7,10 +7,40 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+ - #1525, Allow http status override through response.status guc - @steve-chavez
+ - #1512, Allow schema cache reloading with NOTIFY - @steve-chavez
+ - #1119, Allow config file reloading with SIGUSR2 - @steve-chavez
+ - #1558, Allow 'Bearer' with and without capitalization as authentication schema - @wolfgangwalther
+ - #1559, No downtime when reloading the schema cache with SIGUSR1 - @steve-chavez
+ - #504, Add `log-level` config option. The admitted levels are: crit, error, warn and info - @steve-chavez
+
+### Fixed
+
+ - #1530, Fix how the PostgREST version is shown in the help text when the `.git` directory is not available - @monacoremo
+ - #1094, Fix expired JWTs starting an empty transaction on the db - @steve-chavez
+ - #1475, Fix location header for POST request with select= without PK (#1162) - @wolfgangwalther
+ - #1599, Fix error messages on connection failure for localized postgres on Windows (#1585) - @wolfgangwalther
+
+### Changed
+
+ - #1522, #1528, #1535, Docker images are now built from scratch based on a the static PostgREST executable (#1494) and with Nix instead of a `Dockerfile`. This reduces the compressed image size from over 30mb to about 4mb - @monacoremo
+ - #1475, Location header for POST request is only included when PK is available on the table (#1461) - @wolfgangwalther
+ - #1560, Volatile RPC called with GET now returns 405 Method not Allowed instead of 500 - @wolfgangwalther
+ - #1604, Change the default logging level to `log-level=error`. Only requests with a status greater or equal than 500 will be logged. If you wish to go back to the previous behaviour and log all the requests, use `log-level=info` - @steve-chavez
+
+## [7.0.1] - 2020-05-18
+
 ### Fixed
 
 - #1473, Fix overloaded computed columns on RPC - @wolfgangwalther
 - #1471, Fix POST, PATCH, DELETE with ?select= and return=minimal and PATCH with empty body - @wolfgangwalther
+- #1500, Fix missing `openapi-server-proxy-uri` config option - @steve-chavez
+- #1508, Fix `Content-Profile` not working for POST RPC - @steve-chavez
+- #1452, Fix PUT restriction for all columns - @steve-chavez
+
+### Changed
+
+- From this version onwards, the release page will only include a single Linux static executable that can be run on any Linux distribution.
 
 ## [7.0.0] - 2020-04-03
 
